@@ -303,7 +303,9 @@ tbody tr:hover{background:#FAFBFC}
 const $ = id => document.getElementById(id);
 const MODEL = 'gemini-2.5-flash-image';
 const KEY_LS = 'olive_gemini_key';
+import os
 
+api_key = os.getenv("GOOGLE_API_KEY")
 /* ================= IndexedDB ================= */
 function idb(){
   return new Promise((res,rej)=>{
