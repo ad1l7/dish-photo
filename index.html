@@ -303,7 +303,9 @@ tbody tr:hover{background:#FAFBFC}
 const $ = id => document.getElementById(id);
 const MODEL = 'gemini-2.5-flash-image';
 const KEY_LS = 'olive_gemini_key';
-localStorage.setItem(KEY_LS, 'AQ.Ab8RN6IHLqwCSzMKeiqQumY7NEIQW_bozm3HwA6flZyMrrhfyA');
+// Впиши свой ключ ниже — подставится только если в браузере ещё нет сохранённого ключа
+const BUILT_IN_KEY = '';
+if(BUILT_IN_KEY && !localStorage.getItem(KEY_LS)) localStorage.setItem(KEY_LS, BUILT_IN_KEY);
 
 /* ================= IndexedDB ================= */
 function idb(){
@@ -466,13 +468,29 @@ async function generate(id, kind){
       parts.push({ text: buildPrompt(d, kind) });
     }
 
-    const resp = await fetch('https://generativelanguage.googleapis.com/v1beta/models/' + MODEL + ':generateContent?key=' + encodeURIComponent(key), {
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ contents:[{parts}], generationConfig:{ responseModalities:['TEXT','IMAGE'], imageConfig:{ aspectRatio:'3:2' } } })
-    });
-    const data = await resp.json();
-    if(!resp.ok) throw new Error((data && data.error && data.error.message) || ('HTTP ' + resp.status));
+    const url = 'https://generativelanguage.googleapis.com/v1beta/models/' + MODEL + ':generateContent';
+    const call = async (withRatio) => {
+      const gc = withRatio
+        ? { responseModalities:['TEXT','IMAGE'], imageConfig:{ aspectRatio:'3:2' } }
+        : { responseModalities:['TEXT','IMAGE'] };
+      const r = await fetch(url, {
+        method:'POST',
+        headers:{ 'Content-Type':'application/json', 'x-goog-api-key': key },
+        body: JSON.stringify({ contents:[{parts}], generationConfig: gc })
+      });
+      return { r, data: await r.json() };
+    };
+
+    let { r, data } = await call(true);
+    // если API не понял imageConfig — повторяем без него (формат всё равно задан в промпте)
+    if(!r.ok && /imageConfig|Unknown name|Invalid JSON payload/i.test(JSON.stringify(data))){
+      console.warn('imageConfig отклонён, повтор без него:', data);
+      ({ r, data } = await call(false));
+    }
+    if(!r.ok){
+      console.error('Gemini API error:', data);
+      throw new Error((data && data.error && data.error.message) || ('HTTP ' + r.status));
+    }
 
     const out = ((data.candidates||[])[0]?.content?.parts) || [];
     const ip = out.find(p => (p.inlineData && p.inlineData.data) || (p.inline_data && p.inline_data.data));
@@ -482,9 +500,10 @@ async function generate(id, kind){
     await dbPut(d);
   }catch(e){
     let m = e.message || 'Ошибка генерации';
-    if(/API key|API_KEY|invalid|401|403/i.test(m)) m = 'Ключ не принят — проверьте его в настройках';
+    if(/API key not valid|API_KEY_INVALID/i.test(m)) m = 'Ключ не принят — проверьте его в настройках';
     else if(/quota|429|RESOURCE_EXHAUSTED/i.test(m)) m = 'Лимит запросов — подождите минуту';
     else if(/Failed to fetch/i.test(m)) m = 'Нет соединения с API';
+    else if(m.length > 160) m = m.slice(0,160) + '…';
     errors[bkey] = m;
   }finally{
     busy.delete(bkey); render();
